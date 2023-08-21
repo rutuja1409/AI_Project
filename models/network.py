@@ -5,16 +5,37 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 from core.base_network import BaseNetwork
+from torchvision import transforms
+import torch.nn.functional as F
+from torch import nn 
+def normalize_to_neg_one_to_one(img):
+    return img * 2 - 1
+
+def unnormalize_to_zero_to_one(t):
+    return (t + 1) * 0.5
+
+class NormalizeImage(object):
+    def __call__(self, img):
+        mean = torch.mean(img)
+        std = torch.std(img)
+        return (img - mean) / std
+
+
 class Network(BaseNetwork):
-    def __init__(self, unet, beta_schedule, module_name='sr3', **kwargs):
+    def __init__(self, unet, beta_schedule, module_name='sr3', sampling_timesteps=100, ddim_sampling_eta=0, **kwargs):
         super(Network, self).__init__(**kwargs)
         if module_name == 'sr3':
             from .sr3_modules.unet import UNet
         elif module_name == 'guided_diffusion':
             from .guided_diffusion_modules.unet import UNet
         
+        self.ddim_sampling_eta = ddim_sampling_eta
+        self.sampling_timesteps = sampling_timesteps
         self.denoise_fn = UNet(**unet)
         self.beta_schedule = beta_schedule
+        self.transform = transforms.Compose([NormalizeImage()])
+        self.bce_loss = nn.BCELoss()
+
 
     def set_loss(self, loss_fn):
         self.loss_fn = loss_fn
@@ -29,6 +50,9 @@ class Network(BaseNetwork):
         timesteps, = betas.shape
         self.num_timesteps = int(timesteps)
         
+        assert self.sampling_timesteps <= timesteps
+        self.is_ddim_sampling = self.sampling_timesteps < timesteps
+
         gammas = np.cumprod(alphas, axis=0)
         gammas_prev = np.append(1., gammas[:-1])
 
@@ -43,6 +67,12 @@ class Network(BaseNetwork):
         self.register_buffer('posterior_log_variance_clipped', to_torch(np.log(np.maximum(posterior_variance, 1e-20))))
         self.register_buffer('posterior_mean_coef1', to_torch(betas * np.sqrt(gammas_prev) / (1. - gammas)))
         self.register_buffer('posterior_mean_coef2', to_torch((1. - gammas_prev) * np.sqrt(alphas) / (1. - gammas)))
+
+    def predict_noise_from_start(self, y_t, t, y0):
+        return (
+            (extract(self.sqrt_recip_gammas, t, y_t.shape) * y_t - y0) / \
+            extract(self.sqrt_recipm1_gammas, t, y_t.shape)
+        )
 
     def predict_start_from_noise(self, y_t, t, noise):
         return (
@@ -60,15 +90,16 @@ class Network(BaseNetwork):
 
     def p_mean_variance(self, y_t, t, clip_denoised: bool, y_cond=None):
         noise_level = extract(self.gammas, t, x_shape=(1, 1)).to(y_t.device)
-        y_0_hat = self.predict_start_from_noise(
-                y_t, t=t, noise=self.denoise_fn(torch.cat([y_cond, y_t], dim=1), noise_level))
+        y_0_hat = self.denoise_fn(torch.cat([y_cond, y_t], dim=1), noise_level)
+        y_0_hat = normalize_to_neg_one_to_one(F.sigmoid(y_0_hat))
 
-        if clip_denoised:
-            y_0_hat.clamp_(-1., 1.)
+        # normalize the image samples and binarize the image here
+        y_0_hat[y_0_hat > 0.0] = 1.0
+        y_0_hat[y_0_hat < 0.0] = -1.0
 
         model_mean, posterior_log_variance = self.q_posterior(
             y_0_hat=y_0_hat, y_t=y_t, t=t)
-        return model_mean, posterior_log_variance
+        return model_mean, posterior_log_variance, y_0_hat
 
     def q_sample(self, y_0, sample_gammas, noise=None):
         noise = default(noise, lambda: torch.randn_like(y_0))
@@ -79,28 +110,85 @@ class Network(BaseNetwork):
 
     @torch.no_grad()
     def p_sample(self, y_t, t, clip_denoised=True, y_cond=None):
-        model_mean, model_log_variance = self.p_mean_variance(
+        model_mean, model_log_variance, y_0_hat = self.p_mean_variance(
             y_t=y_t, t=t, clip_denoised=clip_denoised, y_cond=y_cond)
         noise = torch.randn_like(y_t) if any(t>0) else torch.zeros_like(y_t)
-        return model_mean + noise * (0.5 * model_log_variance).exp()
+        return model_mean + noise * (0.5 * model_log_variance).exp(), y_0_hat
+
+    @torch.no_grad()
+    def ddim_sample(self, y_cond, return_all_timesteps=True):
+        shape = y_cond.shape
+        batch, device, total_timesteps, sampling_timesteps, eta = y_cond.shape[0], y_cond.get_device(), self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta
+
+        times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
+        times = list(reversed(times.int().tolist()))
+        time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+
+        img = torch.randn((shape[0], 1, shape[2], shape[3]), device = device)
+        imgs = [img]
+
+        y_0_hat = None
+        ret_arr = img
+
+        i= 0
+        for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
+            t = torch.full((batch,), time, device = device, dtype = torch.long)
+            noise_level = extract(self.gammas, t, x_shape=(1, 1)).to(img.device)
+            y_0_hat = self.denoise_fn(torch.cat([y_cond, img], dim=1), noise_level)
+            y_0_hat = normalize_to_neg_one_to_one(F.sigmoid(y_0_hat))
+
+            # normalize the image samples and binarize the image here
+            y_0_hat[y_0_hat > 0.0] = 1.0
+            y_0_hat[y_0_hat < 0.0] = -1.0
+            
+            pred_noise = self.predict_noise_from_start(img, t, y_0_hat)
+
+            if time_next < 0:
+                img = y_0_hat
+                imgs.append(img)
+                continue
+
+            alpha = self.gammas[time]
+            alpha_next = self.gammas[time_next]
+
+            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            c = (1 - alpha_next - sigma ** 2).sqrt()
+
+            noise = torch.randn_like(img)
+
+            img = y_0_hat * alpha_next.sqrt() + \
+                  c * pred_noise + \
+                  sigma * noise
+
+            if i % 50 == 0:
+                ret_arr = torch.cat([ret_arr, img], dim=0)
+            i+=1
+
+        return img, ret_arr
 
     @torch.no_grad()
     def restoration(self, y_cond, y_t=None, y_0=None, mask=None, sample_num=8):
+        if self.is_ddim_sampling:
+            y_cond = normalize_to_neg_one_to_one(y_cond)
+            return self.ddim_sample(y_cond)
+
         b, *_ = y_cond.shape
 
         assert self.num_timesteps > sample_num, 'num_timesteps must greater than sample_num'
         sample_inter = (self.num_timesteps//sample_num)
         
-        #y_t = default(y_t, lambda: torch.randn_like(y_cond))
-        y_t = default(y_t, lambda: torch.randn_like(y_cond[:, :1, :, :]))
+        b, c, h, w = y_cond.shape
+        y_t = default(y_t, lambda: torch.randn(b, 1, h, w, device=y_cond.device))
         ret_arr = y_t
+        y_cond = normalize_to_neg_one_to_one(y_cond)
         for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
             t = torch.full((b,), i, device=y_cond.device, dtype=torch.long)
-            y_t = self.p_sample(y_t, t, y_cond=y_cond)
+            y_t, y_0_hat = self.p_sample(y_t, t, y_cond=y_cond)
             if mask is not None:
                 y_t = y_0*(1.-mask) + mask*y_t
             if i % sample_inter == 0:
                 ret_arr = torch.cat([ret_arr, y_t], dim=0)
+                ret_arr = torch.cat([ret_arr, y_0_hat], dim=0)
         return y_t, ret_arr
 
     def forward(self, y_0, y_cond=None, mask=None, noise=None):
@@ -112,18 +200,15 @@ class Network(BaseNetwork):
         sample_gammas = (sqrt_gamma_t2-gamma_t1) * torch.rand((b, 1), device=y_0.device) + gamma_t1
         sample_gammas = sample_gammas.view(b, -1)
 
+        y_0 = normalize_to_neg_one_to_one(y_0)
+        y_cond = normalize_to_neg_one_to_one(y_cond)
         noise = default(noise, lambda: torch.randn_like(y_0))
         y_noisy = self.q_sample(
             y_0=y_0, sample_gammas=sample_gammas.view(-1, 1, 1, 1), noise=noise)
 
-        if mask is not None:
-            noise_hat = self.denoise_fn(torch.cat([y_cond, y_noisy*mask+(1.-mask)*y_0], dim=1), sample_gammas)
-            loss = self.loss_fn(mask*noise, mask*noise_hat)
-        else:
-            noise_hat = self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)
-            loss = self.loss_fn(noise, noise_hat)
+        y_0_hat = self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)
+        loss = self.loss_fn(normalize_to_neg_one_to_one(F.sigmoid(y_0_hat)), y_0)
         return loss
-
 
 # gaussian diffusion trainer class
 def exists(x):
