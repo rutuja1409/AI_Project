@@ -132,3 +132,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+180_Network_ema.pth
+180_Network.pth
+180.state
+250_Network_ema.pth
+250_Network.pth

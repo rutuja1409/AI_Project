@@ -10,12 +10,14 @@ from .nn import (
     zero_module,
     normalization,
     count_flops_attn,
-    gamma_embedding
+    gamma_embedding,
 )
+
 
 class SiLU(nn.Module):
     def forward(self, x):
         return x * torch.sigmoid(x)
+
 
 class EmbedBlock(nn.Module):
     """
@@ -27,6 +29,7 @@ class EmbedBlock(nn.Module):
         """
         Apply the module to `x` given `emb` embeddings.
         """
+
 
 class EmbedSequential(nn.Sequential, EmbedBlock):
     """
@@ -41,6 +44,7 @@ class EmbedSequential(nn.Sequential, EmbedBlock):
             else:
                 x = layer(x)
         return x
+
 
 class Upsample(nn.Module):
     """
@@ -64,6 +68,7 @@ class Upsample(nn.Module):
         if self.use_conv:
             x = self.conv(x)
         return x
+
 
 class Downsample(nn.Module):
     """
@@ -155,17 +160,13 @@ class ResBlock(EmbedBlock):
             normalization(self.out_channel),
             SiLU(),
             nn.Dropout(p=dropout),
-            zero_module(
-                nn.Conv2d(self.out_channel, self.out_channel, 3, padding=1)
-            ),
+            zero_module(nn.Conv2d(self.out_channel, self.out_channel, 3, padding=1)),
         )
 
         if self.out_channel == channels:
             self.skip_connection = nn.Identity()
         elif use_conv:
-            self.skip_connection = nn.Conv2d(
-                channels, self.out_channel, 3, padding=1
-            )
+            self.skip_connection = nn.Conv2d(channels, self.out_channel, 3, padding=1)
         else:
             self.skip_connection = nn.Conv2d(channels, self.out_channel, 1)
 
@@ -201,6 +202,7 @@ class ResBlock(EmbedBlock):
             h = h + emb_out
             h = self.out_layers(h)
         return self.skip_connection(x) + h
+
 
 class AttentionBlock(nn.Module):
     """
@@ -308,12 +310,15 @@ class QKVAttention(nn.Module):
             (k * scale).view(bs * self.n_heads, ch, length),
         )  # More stable with f16 than dividing afterwards
         weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
-        a = torch.einsum("bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length))
+        a = torch.einsum(
+            "bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length)
+        )
         return a.reshape(bs, -1, length)
 
     @staticmethod
     def count_flops(model, _x, y):
         return count_flops_attn(model, _x, y)
+
 
 class UNet(nn.Module):
     """
@@ -362,7 +367,6 @@ class UNet(nn.Module):
         resblock_updown=True,
         use_new_attention_order=False,
     ):
-
         super().__init__()
 
         if num_heads_upsample == -1:
@@ -437,9 +441,7 @@ class UNet(nn.Module):
                             down=True,
                         )
                         if resblock_updown
-                        else Downsample(
-                            ch, conv_resample, out_channel=out_ch
-                        )
+                        else Downsample(ch, conv_resample, out_channel=out_ch)
                     )
                 )
                 ch = out_ch
@@ -530,7 +532,9 @@ class UNet(nn.Module):
         :return: an [N x C x ...] Tensor of outputs.
         """
         hs = []
-        gammas = gammas.view(-1, )
+        gammas = gammas.view(
+            -1,
+        )
         emb = self.cond_embed(gamma_embedding(gammas, self.inner_channel))
 
         h = x.type(torch.float32)
@@ -544,7 +548,8 @@ class UNet(nn.Module):
         h = h.type(x.dtype)
         return self.out(h)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     b, c, h, w = 3, 6, 64, 64
     timsteps = 100
     model = UNet(
@@ -553,8 +558,8 @@ if __name__ == '__main__':
         inner_channel=64,
         out_channel=3,
         res_blocks=2,
-        attn_res=[8]
+        attn_res=[8],
     )
     x = torch.randn((b, c, h, w))
-    emb = torch.ones((b, ))
+    emb = torch.ones((b,))
     out = model(x, emb)
