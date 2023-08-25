@@ -1,0 +1,45 @@
+{
+    "python.linting.pylintEnabled": false,
+    "python.linting.pycodestyleEnabled": true,
+    "python.linting.enabled": true,
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true,
+        "source.fixAll": true
+    },
+    "editor.trimAutoWhitespace": true,
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "files.trimTrailingWhitespace": true,
+    "editor.rulers": [
+        120
+    ],
+    "python.analysis.indexing": true,
+    "python.linting.pycodestyleArgs": [
+        "--ignore=D400",
+        "--ignore=D4",
+        "--max-line-length=120"
+    ],
+    "python.formatting.blackArgs": [
+        "-l 120"
+    ],
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/**__pycache__": true,
+    },
+    "python.analysis.autoImportCompletions": true,
+    // Remove Unused Python imports via bash
+    "emeraldwalk.runonsave": {
+        "commands": [
+            {
+                "match": "\\.py$",
+                "isAsync": true,
+                // Use the full path from above in case it can't find it
+                "cmd": "autoflake --in-place --remove-all-unused-imports \"${file}\""
+            },
+        ]
+    },
+}
