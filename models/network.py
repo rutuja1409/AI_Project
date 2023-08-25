@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import nn
 from .ds_unet.unet import LayerNorm, Upsample
 
+
 def normalize_to_neg_one_to_one(img):
     return img * 2 - 1
 
@@ -26,15 +27,7 @@ class NormalizeImage(object):
 
 
 class Network(BaseNetwork):
-    def __init__(
-        self,
-        unet,
-        beta_schedule,
-        module_name="sr3",
-        sampling_timesteps=100,
-        ddim_sampling_eta=0,
-        **kwargs
-    ):
+    def __init__(self, unet, beta_schedule, module_name="sr3", sampling_timesteps=100, ddim_sampling_eta=0, **kwargs):
         super(Network, self).__init__(**kwargs)
         if module_name == "sr3":
             from .sr3_modules.unet import UNet
@@ -42,18 +35,19 @@ class Network(BaseNetwork):
             from .guided_diffusion_modules.unet import UNet
         elif module_name == "ds_unet":
             from .ds_unet.unet import UNet
-            ch = unet['inner_channel']
+
+            ch = unet["inner_channel"]
             self.in_stem_noise = nn.Sequential(
-                nn.Conv2d(unet['out_channel'], ch // 2, kernel_size=4, stride=4),
+                nn.Conv2d(unet["out_channel"], ch // 2, kernel_size=4, stride=4),
                 LayerNorm(ch // 2, eps=1e-6, data_format="channels_first"),
             )
             self.in_stem_cond = nn.Sequential(
-                nn.Conv2d(unet['in_channel']-unet['out_channel'], ch // 2, kernel_size=4, stride=4),
+                nn.Conv2d(unet["in_channel"] - unet["out_channel"], ch // 2, kernel_size=4, stride=4),
                 LayerNorm(ch // 2, eps=1e-6, data_format="channels_first"),
             )
             self.upsample = nn.Sequential(
                 Upsample(ch, use_conv=True, out_channel=ch // 2),
-                Upsample(ch // 2, use_conv=True, out_channel=unet['out_channel']),
+                Upsample(ch // 2, use_conv=True, out_channel=unet["out_channel"]),
             )
 
         self.ddim_sampling_eta = ddim_sampling_eta
@@ -61,7 +55,6 @@ class Network(BaseNetwork):
         self.denoise_fn = UNet(**unet)
         self.beta_schedule = beta_schedule
         self.transform = transforms.Compose([NormalizeImage()])
-        
 
     def set_loss(self, loss_fn):
         self.loss_fn = loss_fn
@@ -69,9 +62,7 @@ class Network(BaseNetwork):
     def set_new_noise_schedule(self, device=torch.device("cuda"), phase="train"):
         to_torch = partial(torch.tensor, dtype=torch.float32, device=device)
         betas = make_beta_schedule(**self.beta_schedule[phase])
-        betas = (
-            betas.detach().cpu().numpy() if isinstance(betas, torch.Tensor) else betas
-        )
+        betas = betas.detach().cpu().numpy() if isinstance(betas, torch.Tensor) else betas
         alphas = 1.0 - betas
 
         (timesteps,) = betas.shape
@@ -120,23 +111,20 @@ class Network(BaseNetwork):
             extract(self.posterior_mean_coef1, t, y_t.shape) * y_0_hat
             + extract(self.posterior_mean_coef2, t, y_t.shape) * y_t
         )
-        posterior_log_variance_clipped = extract(
-            self.posterior_log_variance_clipped, t, y_t.shape
-        )
+        posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, y_t.shape)
         return posterior_mean, posterior_log_variance_clipped
 
     def p_mean_variance(self, y_t, t, clip_denoised: bool, y_cond=None):
         noise_level = extract(self.gammas, t, x_shape=(1, 1)).to(y_t.device)
         y_0_hat = self.denoise_fn(torch.cat([y_cond, y_t], dim=1), noise_level)
+        y_0_hat = F.tanh(self.upsample(self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)))
         y_0_hat = normalize_to_neg_one_to_one(F.tanh(y_0_hat))
 
         # normalize the image samples and binarize the image here
         y_0_hat[y_0_hat > 0.0] = 1.0
         y_0_hat[y_0_hat < 0.0] = -1.0
 
-        model_mean, posterior_log_variance = self.q_posterior(
-            y_0_hat=y_0_hat, y_t=y_t, t=t
-        )
+        model_mean, posterior_log_variance = self.q_posterior(y_0_hat=y_0_hat, y_t=y_t, t=t)
         return model_mean, posterior_log_variance, y_0_hat
 
     def q_sample(self, y_0, sample_gammas, noise=None):
@@ -166,9 +154,7 @@ class Network(BaseNetwork):
             -1, total_timesteps - 1, steps=sampling_timesteps + 1
         )  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
-        time_pairs = list(
-            zip(times[:-1], times[1:])
-        )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+        time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
         img = torch.randn((shape[0], 1, shape[2], shape[3]), device=device)
         imgs = [img]
@@ -197,9 +183,7 @@ class Network(BaseNetwork):
             alpha = self.gammas[time]
             alpha_next = self.gammas[time_next]
 
-            sigma = (
-                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
-            )
+            sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma**2).sqrt()
 
             noise = torch.randn_like(img)
@@ -220,15 +204,12 @@ class Network(BaseNetwork):
 
         b, *_ = y_cond.shape
 
-        assert (
-            self.num_timesteps > sample_num
-        ), "num_timesteps must greater than sample_num"
+        assert self.num_timesteps > sample_num, "num_timesteps must greater than sample_num"
         sample_inter = self.num_timesteps // sample_num
 
         b, c, h, w = y_cond.shape
         y_t = default(y_t, lambda: torch.randn(b, 1, h, w, device=y_cond.device))
         ret_arr = y_t
-        y_cond = normalize_to_neg_one_to_one(y_cond)
         for i in tqdm(
             reversed(range(0, self.num_timesteps)),
             desc="sampling loop time step",
@@ -249,27 +230,23 @@ class Network(BaseNetwork):
         t = torch.randint(1, self.num_timesteps, (b,), device=y_0.device).long()
         gamma_t1 = extract(self.gammas, t - 1, x_shape=(1, 1))
         sqrt_gamma_t2 = extract(self.gammas, t, x_shape=(1, 1))
-        sample_gammas = (sqrt_gamma_t2 - gamma_t1) * torch.rand(
-            (b, 1), device=y_0.device
-        ) + gamma_t1
+        sample_gammas = (sqrt_gamma_t2 - gamma_t1) * torch.rand((b, 1), device=y_0.device) + gamma_t1
         sample_gammas = sample_gammas.view(b, -1)
 
-        y_0 = self.in_stem_noise(y_0)
+        y_0_latent = self.in_stem_noise(y_0)
         y_cond = self.in_stem_cond(y_cond)
-        noise = default(noise, lambda: torch.randn_like(y_0))
-        y_noisy = self.q_sample(
-            y_0=y_0, sample_gammas=sample_gammas.view(-1, 1, 1, 1), noise=noise
-        )
+        noise = default(noise, lambda: torch.randn_like(y_0_latent))
+        y_noisy = self.q_sample(y_0=y_0_latent, sample_gammas=sample_gammas.view(-1, 1, 1, 1), noise=noise)
 
-        print(
-            "y_0",
-            y_0.min(),
-            y_0.max(),
-            y_0.mean(),
-            y_0.std(),
-        )
-        print("y_cond", y_cond.min(), y_cond.max(), y_cond.mean(), y_cond.std())
-        print("y_noisy", y_noisy.min(), y_noisy.max(), y_noisy.mean(), y_noisy.std())
+        # print(
+        #     "y_0",
+        #     y_0_latent.min(),
+        #     y_0_latent.max(),
+        #     y_0_latent.mean(),
+        #     y_0_latent.std(),
+        # )
+        # print("y_cond", y_cond.min(), y_cond.max(), y_cond.mean(), y_cond.std())
+        # print("y_noisy", y_noisy.min(), y_noisy.max(), y_noisy.mean(), y_noisy.std())
         # from torchinfo import summary
 
         # print(
@@ -279,28 +256,28 @@ class Network(BaseNetwork):
         #         gammas=sample_gammas,
         #     )
         # )
+        # print("y_cond", y_cond.shape, y_noisy.shape, y_0_latent.shape)
+        # x = self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)
+        # print(x.shape)
         y_0_hat = F.tanh(self.upsample(self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)))
         # print("y_0_hat", y_0_hat.min(), y_0_hat.max(), y_0_hat.mean(), y_0_hat.std())
         loss = self.loss_fn(y_0_hat, y_0)
-        print(
-            "F.tanh(y_0_hat)",
-            y_0_hat.min(),
-            y_0_hat.max(),
-            y_0_hat.mean(),
-            y_0_hat.std(),
-            print("y_0", y_0.shape, y_0_hat.shape),
-        )
+        # print(
+        #     "F.tanh(y_0_hat)",
+        #     y_0_hat.min(),
+        #     y_0_hat.max(),
+        #     y_0_hat.mean(),
+        #     y_0_hat.std(),
+        #     print("y_0", y_0.shape, y_0_hat.shape),
+        # )
 
-        import matplotlib.pyplot as plt
+        # import matplotlib.pyplot as plt
 
-        plt.imshow(y_noisy[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        plt.show()
+        # plt.imshow(y_0_hat[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        # plt.show()
 
-        plt.imshow(y_0_hat[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        plt.show()
-
-        plt.imshow(y_0[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        plt.show()
+        # plt.imshow(y_0[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        # plt.show()
         return loss
 
 
@@ -325,22 +302,13 @@ def extract(a, t, x_shape=(1, 1, 1, 1)):
 def _warmup_beta(linear_start, linear_end, n_timestep, warmup_frac):
     betas = linear_end * np.ones(n_timestep, dtype=np.float64)
     warmup_time = int(n_timestep * warmup_frac)
-    betas[:warmup_time] = np.linspace(
-        linear_start, linear_end, warmup_time, dtype=np.float64
-    )
+    betas[:warmup_time] = np.linspace(linear_start, linear_end, warmup_time, dtype=np.float64)
     return betas
 
 
-def make_beta_schedule(
-    schedule, n_timestep, linear_start=1e-6, linear_end=1e-2, cosine_s=8e-3
-):
+def make_beta_schedule(schedule, n_timestep, linear_start=1e-6, linear_end=1e-2, cosine_s=8e-3):
     if schedule == "quad":
-        betas = (
-            np.linspace(
-                linear_start**0.5, linear_end**0.5, n_timestep, dtype=np.float64
-            )
-            ** 2
-        )
+        betas = np.linspace(linear_start**0.5, linear_end**0.5, n_timestep, dtype=np.float64) ** 2
     elif schedule == "linear":
         betas = np.linspace(linear_start, linear_end, n_timestep, dtype=np.float64)
     elif schedule == "warmup10":
@@ -352,9 +320,7 @@ def make_beta_schedule(
     elif schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
         betas = 1.0 / np.linspace(n_timestep, 1, n_timestep, dtype=np.float64)
     elif schedule == "cosine":
-        timesteps = (
-            torch.arange(n_timestep + 1, dtype=torch.float64) / n_timestep + cosine_s
-        )
+        timesteps = torch.arange(n_timestep + 1, dtype=torch.float64) / n_timestep + cosine_s
         alphas = timesteps / (1 + cosine_s) * math.pi / 2
         alphas = torch.cos(alphas).pow(2)
         alphas = alphas / alphas[0]

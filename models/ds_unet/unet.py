@@ -33,9 +33,7 @@ class LayerNorm(nn.Module):
 
     def forward(self, x):
         if self.data_format == "channels_last":
-            return F.layer_norm(
-                x, self.normalized_shape, self.weight, self.bias, self.eps
-            )
+            return F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
         elif self.data_format == "channels_first":
             u = x.mean(1, keepdim=True)
             s = (x - u).pow(2).mean(1, keepdim=True)
@@ -114,9 +112,7 @@ class Downsample(nn.Module):
         self.use_conv = use_conv
         stride = 2
         if use_conv:
-            self.op = nn.Conv2d(
-                self.channels, self.out_channel, 3, stride=stride, padding=1
-            )
+            self.op = nn.Conv2d(self.channels, self.out_channel, 3, stride=stride, padding=1)
         else:
             assert self.channels == self.out_channel
             self.op = nn.AvgPool2d(kernel_size=stride, stride=stride)
@@ -207,9 +203,7 @@ class ResBlock(EmbedBlock):
         :param emb: an [N x emb_channels] Tensor of embeddings.
         :return: an [N x C x ...] Tensor of outputs.
         """
-        return checkpoint(
-            self._forward, (x, emb), self.parameters(), self.use_checkpoint
-        )
+        return checkpoint(self._forward, (x, emb), self.parameters(), self.use_checkpoint)
 
     def _forward(self, x, emb):
         if self.updown:
@@ -302,9 +296,7 @@ class QKVAttentionLegacy(nn.Module):
         ch = width // (3 * self.n_heads)
         q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch, dim=1)
         scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = torch.einsum(
-            "bct,bcs->bts", q * scale, k * scale
-        )  # More stable with f16 than dividing afterwards
+        weight = torch.einsum("bct,bcs->bts", q * scale, k * scale)  # More stable with f16 than dividing afterwards
         weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
         a = torch.einsum("bts,bcs->bct", weight, v)
         return a.reshape(bs, -1, length)
@@ -340,9 +332,7 @@ class QKVAttention(nn.Module):
             (k * scale).view(bs * self.n_heads, ch, length),
         )  # More stable with f16 than dividing afterwards
         weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
-        a = torch.einsum(
-            "bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length)
-        )
+        a = torch.einsum("bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length))
         return a.reshape(bs, -1, length)
 
     @staticmethod
@@ -425,9 +415,7 @@ class UNet(nn.Module):
         )
 
         ch = input_ch = int(channel_mults[0] * inner_channel)
-        self.input_blocks = nn.ModuleList(
-            [EmbedSequential(nn.Conv2d(ch // 2, ch, 3, padding=1))]
-        )
+        self.input_blocks = nn.ModuleList([EmbedSequential(nn.Conv2d(ch, ch, 3, padding=1))])
         self._feature_size = ch
         input_block_chans = [ch]
         ds = 1
