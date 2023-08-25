@@ -425,14 +425,6 @@ class UNet(nn.Module):
         )
 
         ch = input_ch = int(channel_mults[0] * inner_channel)
-        self.in_stem = nn.Sequential(
-            nn.Conv2d(in_channel, ch // 2, kernel_size=4, stride=4),
-            LayerNorm(ch // 2, eps=1e-6, data_format="channels_first"),
-        )
-        # self.out_stem = nn.Sequential(
-        #     nn.Conv2d(in_channel, kernel_size=4, stride=4),
-        #     LayerNorm(ch // 2, eps=1e-6, data_format="channels_first"),
-        # )
         self.input_blocks = nn.ModuleList(
             [EmbedSequential(nn.Conv2d(ch // 2, ch, 3, padding=1))]
         )
@@ -560,8 +552,8 @@ class UNet(nn.Module):
             normalization(ch),
             SiLU(),
             # zero_module(nn.Conv2d(input_ch, out_channel, 3, padding=1)),
-            Upsample(input_ch, use_conv=True, out_channel=input_ch // 2),
-            Upsample(input_ch // 2, use_conv=True, out_channel=out_channel),
+            # Upsample(input_ch, use_conv=True, out_channel=input_ch // 2),
+            # Upsample(input_ch // 2, use_conv=True, out_channel=out_channel),
         )
 
     def forward(self, x, gammas):
@@ -576,7 +568,6 @@ class UNet(nn.Module):
             -1,
         )
         emb = self.cond_embed(gamma_embedding(gammas, self.inner_channel))
-        x = self.in_stem(x)
         h = x.type(torch.float32)
         for module in self.input_blocks:
             h = module(h, emb)

@@ -8,7 +8,7 @@ from core.base_network import BaseNetwork
 from torchvision import transforms
 import torch.nn.functional as F
 from torch import nn
-
+from .ds_unet.unet import LayerNorm, Upsample
 
 def normalize_to_neg_one_to_one(img):
     return img * 2 - 1
@@ -42,13 +42,26 @@ class Network(BaseNetwork):
             from .guided_diffusion_modules.unet import UNet
         elif module_name == "ds_unet":
             from .ds_unet.unet import UNet
+            ch = unet['inner_channel']
+            self.in_stem_noise = nn.Sequential(
+                nn.Conv2d(unet['out_channel'], ch // 2, kernel_size=4, stride=4),
+                LayerNorm(ch // 2, eps=1e-6, data_format="channels_first"),
+            )
+            self.in_stem_cond = nn.Sequential(
+                nn.Conv2d(unet['in_channel']-unet['out_channel'], ch // 2, kernel_size=4, stride=4),
+                LayerNorm(ch // 2, eps=1e-6, data_format="channels_first"),
+            )
+            self.upsample = nn.Sequential(
+                Upsample(ch, use_conv=True, out_channel=ch // 2),
+                Upsample(ch // 2, use_conv=True, out_channel=unet['out_channel']),
+            )
 
         self.ddim_sampling_eta = ddim_sampling_eta
         self.sampling_timesteps = sampling_timesteps
         self.denoise_fn = UNet(**unet)
         self.beta_schedule = beta_schedule
         self.transform = transforms.Compose([NormalizeImage()])
-        self.bce_loss = nn.BCELoss()
+        
 
     def set_loss(self, loss_fn):
         self.loss_fn = loss_fn
@@ -241,20 +254,22 @@ class Network(BaseNetwork):
         ) + gamma_t1
         sample_gammas = sample_gammas.view(b, -1)
 
+        y_0 = self.in_stem_noise(y_0)
+        y_cond = self.in_stem_cond(y_cond)
         noise = default(noise, lambda: torch.randn_like(y_0))
         y_noisy = self.q_sample(
             y_0=y_0, sample_gammas=sample_gammas.view(-1, 1, 1, 1), noise=noise
         )
 
-        # print(
-        #     "y_0",
-        #     y_0.min(),
-        #     y_0.max(),
-        #     y_0.mean(),
-        #     y_0.std(),
-        # )
-        # print("y_cond", y_cond.min(), y_cond.max(), y_cond.mean(), y_cond.std())
-        # print("y_noisy", y_noisy.min(), y_noisy.max(), y_noisy.mean(), y_noisy.std())
+        print(
+            "y_0",
+            y_0.min(),
+            y_0.max(),
+            y_0.mean(),
+            y_0.std(),
+        )
+        print("y_cond", y_cond.min(), y_cond.max(), y_cond.mean(), y_cond.std())
+        print("y_noisy", y_noisy.min(), y_noisy.max(), y_noisy.mean(), y_noisy.std())
         # from torchinfo import summary
 
         # print(
@@ -264,30 +279,28 @@ class Network(BaseNetwork):
         #         gammas=sample_gammas,
         #     )
         # )
-        y_0_hat = self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)
+        y_0_hat = F.tanh(self.upsample(self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)))
         # print("y_0_hat", y_0_hat.min(), y_0_hat.max(), y_0_hat.mean(), y_0_hat.std())
-        loss = self.loss_fn(F.tanh(y_0_hat), y_0)
-        # print(
-        #     "F.tanh(y_0_hat)",
-        #     F.tanh(y_0_hat).min(),
-        #     F.tanh(y_0_hat).max(),
-        #     F.tanh(y_0_hat).mean(),
-        #     F.tanh(y_0_hat).std(),
-        #     print("y_0", y_0.shape, y_0_hat.shape),
-        # )
+        loss = self.loss_fn(y_0_hat, y_0)
+        print(
+            "F.tanh(y_0_hat)",
+            y_0_hat.min(),
+            y_0_hat.max(),
+            y_0_hat.mean(),
+            y_0_hat.std(),
+            print("y_0", y_0.shape, y_0_hat.shape),
+        )
 
-        # print("y_noisy", y_noisy.shape)
+        import matplotlib.pyplot as plt
 
-        # import matplotlib.pyplot as plt
+        plt.imshow(y_noisy[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        plt.show()
 
-        # plt.imshow(y_noisy[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        # plt.show()
+        plt.imshow(y_0_hat[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        plt.show()
 
-        # plt.imshow(F.tanh(y_0_hat[0]).permute(1, 2, 0).detach().cpu(), cmap="gray")
-        # plt.show()
-
-        # plt.imshow(y_0[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        # plt.show()
+        plt.imshow(y_0[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        plt.show()
         return loss
 
 
