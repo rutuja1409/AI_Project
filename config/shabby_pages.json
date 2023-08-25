@@ -21,7 +21,7 @@
                     "ShabbyPages"
                 ],
                 "args": {
-                    "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+                    "dataset_path": "/ds/documents/ShabbyPages",
                     "image_size": 256,
                     "stage": "train",
                     "use_gray_gt": true
@@ -44,7 +44,7 @@
                     "ShabbyPages"
                 ],
                 "args": {
-                    "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+                    "dataset_path": "/ds/documents/ShabbyPages",
                     "image_size": 256,
                     "stage": "test",
                     "use_gray_gt": true
@@ -66,7 +66,7 @@
                     "ShabbyPages"
                 ],
                 "args": {
-                    "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+                    "dataset_path": "/ds/documents/ShabbyPages",
                     "image_size": 256,
                     "stage": "validation",
                     "use_gray_gt": true
@@ -159,7 +159,7 @@
     "train": {
         "n_epoch": 2000,
         "n_iter": 1e8,
-        "val_epoch": 5,
+        "val_epoch": 1,
         "save_checkpoint_epoch": 10,
         "log_iter": 1e4,
         "tensorboard": true

@@ -147,11 +147,14 @@ class ShabbyPages(data.Dataset):
         ret = {}
         ret["gt_image"] = gt_image
         ret["cond_image"] = cond_image
-        ret["path"] = sample["image_file_path"]
+        ret["path"] = Path(sample["image_file_path"]).name
         return ret
 
     def __len__(self):
-        return len(self.data_reader)
+        if self.stage == 'validation':
+            return 101
+        else:
+            return len(self.data_reader)
 
 
 # d = ShabbyPages(
