@@ -6,7 +6,7 @@
     "seed": -1,
     "finetune_norm": false,
     "path": {
-        "base_dir": "experiments",
+        "base_dir": "/netscratch/saifullah/shabby_bin/experiments",
         "code": "code",
         "tb_logger": "tb_logger",
         "results": "results",
@@ -21,7 +21,7 @@
                     "ShabbyPages"
                 ],
                 "args": {
-                    "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+                    "dataset_path": "/ds/documents/ShabbyPages",
                     "image_size": 256,
                     "stage": "train",
                     "use_gray_gt": true
@@ -29,7 +29,7 @@
             },
             "dataloader": {
                 "args": {
-                    "batch_size": 8,
+                    "batch_size": 32,
                     "num_workers": 8,
                     "shuffle": true,
                     "pin_memory": true,
@@ -44,7 +44,7 @@
                     "ShabbyPages"
                 ],
                 "args": {
-                    "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+                    "dataset_path": "/ds/documents/ShabbyPages",
                     "image_size": 256,
                     "stage": "test",
                     "use_gray_gt": true
@@ -66,7 +66,7 @@
                     "ShabbyPages"
                 ],
                 "args": {
-                    "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+                    "dataset_path": "/ds/documents/ShabbyPages",
                     "image_size": 256,
                     "stage": "validation",
                     "use_gray_gt": true
@@ -135,13 +135,13 @@
                     "beta_schedule": {
                         "train": {
                             "schedule": "linear",
-                            "n_timestep": 1000,
+                            "n_timestep": 200,
                             "linear_start": 1e-6,
                             "linear_end": 0.01
                         },
                         "test": {
                             "schedule": "linear",
-                            "n_timestep": 1000,
+                            "n_timestep": 200,
                             "linear_start": 1e-4,
                             "linear_end": 0.09
                         }
