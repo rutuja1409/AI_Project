@@ -29,8 +29,8 @@
             },
             "dataloader": {
                 "args": {
-                    "batch_size": 1,
-                    "num_workers": 1,
+                    "batch_size": 32,
+                    "num_workers": 8,
                     "shuffle": true,
                     "pin_memory": true,
                     "drop_last": true
@@ -112,7 +112,7 @@
                 ],
                 "args": {
                     "init_type": "kaiming",
-                    "module_name": "guided_diffusion",
+                    "module_name": "ds_unet",
                     "unet": {
                         "in_channel": 4,
                         "out_channel": 1,
@@ -120,12 +120,12 @@
                         "channel_mults": [
                             1,
                             2,
-                            2,
-                            2,
+                            4,
                             2
                         ],
                         "attn_res": [
-                            16
+                            16,
+                            8
                         ],
                         "num_head_channels": 32,
                         "res_blocks": 1,

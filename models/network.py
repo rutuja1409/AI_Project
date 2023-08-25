@@ -40,6 +40,8 @@ class Network(BaseNetwork):
             from .sr3_modules.unet import UNet
         elif module_name == "guided_diffusion":
             from .guided_diffusion_modules.unet import UNet
+        elif module_name == "ds_unet":
+            from .ds_unet.unet import UNet
 
         self.ddim_sampling_eta = ddim_sampling_eta
         self.sampling_timesteps = sampling_timesteps
@@ -232,7 +234,6 @@ class Network(BaseNetwork):
         # sampling from p(gammas)
         b, *_ = y_0.shape
         t = torch.randint(1, self.num_timesteps, (b,), device=y_0.device).long()
-        print("t", t)
         gamma_t1 = extract(self.gammas, t - 1, x_shape=(1, 1))
         sqrt_gamma_t2 = extract(self.gammas, t, x_shape=(1, 1))
         sample_gammas = (sqrt_gamma_t2 - gamma_t1) * torch.rand(
@@ -254,6 +255,15 @@ class Network(BaseNetwork):
         # )
         # print("y_cond", y_cond.min(), y_cond.max(), y_cond.mean(), y_cond.std())
         # print("y_noisy", y_noisy.min(), y_noisy.max(), y_noisy.mean(), y_noisy.std())
+        # from torchinfo import summary
+
+        # print(
+        #     summary(
+        #         self.denoise_fn,
+        #         input_data=torch.cat([y_cond, y_noisy], dim=1),
+        #         gammas=sample_gammas,
+        #     )
+        # )
         y_0_hat = self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)
         # print("y_0_hat", y_0_hat.min(), y_0_hat.max(), y_0_hat.mean(), y_0_hat.std())
         loss = self.loss_fn(F.tanh(y_0_hat), y_0)
@@ -266,18 +276,18 @@ class Network(BaseNetwork):
         #     print("y_0", y_0.shape, y_0_hat.shape),
         # )
 
-        print("y_noisy", y_noisy.shape)
+        # print("y_noisy", y_noisy.shape)
 
-        import matplotlib.pyplot as plt
+        # import matplotlib.pyplot as plt
 
-        plt.imshow(y_noisy[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        plt.show()
+        # plt.imshow(y_noisy[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        # plt.show()
 
-        plt.imshow(F.tanh(y_0_hat[0]).permute(1, 2, 0).detach().cpu(), cmap="gray")
-        plt.show()
+        # plt.imshow(F.tanh(y_0_hat[0]).permute(1, 2, 0).detach().cpu(), cmap="gray")
+        # plt.show()
 
-        plt.imshow(y_0[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
-        plt.show()
+        # plt.imshow(y_0[0].permute(1, 2, 0).detach().cpu(), cmap="gray")
+        # plt.show()
         return loss
 
 

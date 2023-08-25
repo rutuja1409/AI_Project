@@ -6,11 +6,27 @@ from torchvision import transforms
 from PIL import Image
 import numpy as np
 
+import torchvision.transforms.functional as F
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
 import random
 import torchvision.transforms.functional as TF
+
+
+class SquarePad:
+    """
+    Pads the image to right side with given backgroud pixel values
+    """
+
+    pad_value: int = 255
+
+    def __call__(self, image):
+        w, h = image.size
+        max_wh = np.max([w, h])
+        hp = int(max_wh - w)
+        vp = int(max_wh - h)
+        padding = (0, 0, hp, vp)
+        return F.pad(image, padding, self.pad_value, "constant")
 
 
 class ShabbyPages(data.Dataset):
@@ -27,6 +43,7 @@ class ShabbyPages(data.Dataset):
             mean = [0.5, 0.5, 0.5]
             std = [0.5, 0.5, 0.5]
 
+        self.pad = transforms.Compose([SquarePad()])
         if self.stage == "train":
             self.tfs = transforms.Compose(
                 [
@@ -61,7 +78,7 @@ class ShabbyPages(data.Dataset):
         from datadings.reader import MsgpackReader
 
         self.data_reader = MsgpackReader(
-            Path(self.dataset_path) / self.stage / "512x512.msgpack"
+            Path(self.dataset_path) / "PNG" / self.stage / "train_512x512.msgpack"
         )
 
     def __getitem__(self, index):
@@ -69,7 +86,9 @@ class ShabbyPages(data.Dataset):
 
         sample = pickle.loads(self.data_reader[index]["data"])
         cond_image = Image.open(io.BytesIO(sample["image"]))
-        gt_image = Image.open(io.BytesIO(sample["gt_image"]))
+        gt_image = Image.open(io.BytesIO(sample["gt_image"])).convert("L")
+        cond_image = self.pad(cond_image)
+        gt_image = self.pad(gt_image)
 
         # apply data augmentation
         if self.stage == "train":
@@ -99,19 +118,22 @@ class ShabbyPages(data.Dataset):
         )
         if gt_image.mean() == 0:
             gt_image = 255 - gt_image
+        gt_image = Image.fromarray(gt_image)
 
         # binarize gt_images
         cond_image = self.tfs(cond_image)
         gt_image = self.gray_tfs(gt_image)
 
+        # import matplotlib.pyplot as plt
+
         # print("stage", self.stage)
         # print(cond_image.shape, gt_image.shape)
 
-        # plt.imshow(cond_image.permute(1,2,0))
+        # plt.imshow(cond_image.permute(1, 2, 0))
         # plt.show()
 
-        plt.imshow(gt_image.permute(1, 2, 0), cmap="gray", vmin=-1, vmax=1)
-        plt.show()
+        # plt.imshow(gt_image.permute(1, 2, 0), cmap="gray", vmin=-1, vmax=1)
+        # plt.show()
         # print(
         #     "cond_image",
         #     cond_image.min(),
@@ -122,7 +144,6 @@ class ShabbyPages(data.Dataset):
         # print(
         #     "gt_image", gt_image.min(), gt_image.max(), gt_image.mean(), gt_image.std()
         # )
-
         ret = {}
         ret["gt_image"] = gt_image
         ret["cond_image"] = cond_image
@@ -133,13 +154,13 @@ class ShabbyPages(data.Dataset):
         return len(self.data_reader)
 
 
-d = ShabbyPages(
-    **{
-        "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
-        "image_size": 256,
-        "stage": "train",
-        "use_gray_gt": True,
-    }
-)
-for i in range(10):
-    d[i]
+# d = ShabbyPages(
+#     **{
+#         "dataset_path": "/run/user/3841/gvfs/sftp:host=login1.pegasus.kl.dfki.de/ds/documents/ShabbyPages",
+#         "image_size": 256,
+#         "stage": "train",
+#         "use_gray_gt": True,
+#     }
+# )
+# for i in range(10):
+#     d[i]
